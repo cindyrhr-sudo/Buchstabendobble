@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Buchstaben-Dobble</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Buchstaben-Dobble">
+    <meta name="theme-color" content="#4f46e5">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <h1>Buchstaben-Dobble</h1>
+
+    <main>
+        <div id="card1" class="card"></div>
+        <div id="card2" class="card"></div>
+    </main>
+
+    <footer>
+        <button id="btn-next" onclick="nextRound()">Nächste Karten 🔄</button>
+        <button id="btn-solve" onclick="showSolution()">Auflösen ✨</button>
+    </footer>
+
+    <script src="cards.js"></script>
+    <script>
+        // ------------------------------------------------------------
+        // Zufällig verstreutes Layout mit Kollisionsvermeidung.
+        // Alle Maße sind Bruchteile der Kartenbreite (Referenz 270px),
+        // die Schriftgröße wird mit der Kartengröße mitskaliert -
+        // dadurch sieht die Anordnung auf jeder Kartengröße gleich aus.
+        // Buchstaben bleiben immer aufrecht (keine Drehung), sonst wären
+        // b/d/p/q oder n/u nicht mehr unterscheidbar.
+        // ------------------------------------------------------------
+        const REFERENCE_CARD_PX = 270;
+        const MAX_CARD_PX = 560;
+        const CARD_SAFETY_MARGIN_PX = 10;
+        const BASE_REM = 2.4;
+        const PADDING_PX = 5;
+        const SAFE_EDGE_R = 0.42;
+        const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+        let card1Idx = 0, card2Idx = 1;
+        let layout1 = [], layout2 = [];
+
+        // Kreis, der das Zeichen (Breite ~0.6em pro Buchstabe, Höhe ~0.9em) umschließt
+        function footprintFrac(rem, text) {
+            const em = rem * 16;
+            const radius = 0.5 * Math.hypot(0.6 * text.length * em, 0.9 * em);
+            return (radius + PADDING_PX) / REFERENCE_CARD_PX;
+        }
+
+        function generateLayout(symbols) {
+            const count = symbols.length;
+            const items = symbols.map((text, i) => {
+                const rem = BASE_REM * (0.85 + Math.random() * 0.35);
+                return { i, text, rem, frac: footprintFrac(rem, text) };
+            });
+
+            // Gleichmäßige Basis-Slots (Sonnenblumen-Verteilung), zufällig zugelost
+            const typical = footprintFrac(BASE_REM, 'ab');
+            const slotMaxR = Math.max(0.1, SAFE_EDGE_R - typical);
+            const rot = Math.random() * Math.PI * 2;
+            const slots = [];
+            for (let k = 0; k < count; k++) {
+                const idx = k + 0.5;
+                const r = slotMaxR * Math.sqrt(idx / count);
+                const th = idx * GOLDEN_ANGLE + rot;
+                slots.push({ x: r * Math.cos(th), y: r * Math.sin(th) });
+            }
+            for (let k = slots.length - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [slots[k], slots[j]] = [slots[j], slots[k]];
+            }
+
+            const order = [...items].sort((a, b) => b.frac - a.frac); // Größte zuerst
+            const placed = [];
+            const result = new Array(count);
+
+            function fits(x, y, frac) {
+                let minMargin = Infinity;
+                for (const p of placed) {
+                    minMargin = Math.min(minMargin, Math.hypot(x - p.x, y - p.y) - (frac + p.frac));
+                }
+                return minMargin;
+            }
+
+            order.forEach((item, n) => {
+                const slot = slots[n];
+                let final = null;
+
+                for (let step = 0; step < 20 && !final; step++) {
+                    const mult = Math.max(0.4, Math.pow(0.88, step));
+                    const frac = item.frac * mult;
+                    const maxR = Math.max(0.05, SAFE_EDGE_R - frac);
+                    let best = null, bestMargin = -Infinity;
+
+                    const tryPos = (x, y) => {
+                        if (Math.hypot(x, y) > maxR) return false;
+                        const m = fits(x, y, frac);
+                        if (m >= 0) { final = { x, y, frac, rem: item.rem * mult }; return true; }
+                        if (m > bestMargin) { bestMargin = m; best = { x, y }; }
+                        return false;
+                    };
+
+                    // A: kleine Streuung um den Slot
+                    outer: for (const jr of [0.02, 0.05, 0.09, 0.14, 0.20]) {
+                        for (let a = 0; a < 40; a++) {
+                            if (tryPos(slot.x + (Math.random() * 2 - 1) * jr,
+                                       slot.y + (Math.random() * 2 - 1) * jr)) break outer;
+                        }
+                    }
+                    // B: breite Suche über die ganze Karte
+                    for (let a = 0; a < 250 && !final; a++) {
+                        const r = Math.sqrt(Math.random()) * maxR;
+                        const th = Math.random() * Math.PI * 2;
+                        tryPos(r * Math.cos(th), r * Math.sin(th));
+                    }
+                    // C: letzter Ausweg - bestes Ergebnis nehmen
+                    if (!final && mult <= 0.4) {
+                        final = { x: best ? best.x : 0, y: best ? best.y : 0, frac, rem: item.rem * mult };
+                    }
+                }
+                placed.push(final);
+                result[item.i] = { x: final.x, y: final.y, rem: final.rem };
+            });
+            return result;
+        }
+
+        function renderCard(id, symbols, layout, common) {
+            const el = document.getElementById(id);
+            el.innerHTML = '';
+            const size = el.getBoundingClientRect().width || REFERENCE_CARD_PX;
+            const scale = size / REFERENCE_CARD_PX;
+
+            symbols.forEach((text, i) => {
+                const pos = layout[i];
+                const div = document.createElement('div');
+                const isMatch = common !== undefined && text === common;
+                div.className = 'sym' + (isMatch ? ' highlight' : '');
+                div.style.fontSize = (pos.rem * (isMatch ? 1.2 : 1) * 16 * scale) + 'px';
+                div.style.left = (size / 2 + pos.x * size) + 'px';
+                div.style.top = (size / 2 + pos.y * size) + 'px';
+                div.textContent = text;
+                el.appendChild(div);
+            });
+        }
+
+        function nextRound() {
+            card1Idx = Math.floor(Math.random() * CARDS.length);
+            do { card2Idx = Math.floor(Math.random() * CARDS.length); } while (card2Idx === card1Idx);
+
+            layout1 = generateLayout(CARDS[card1Idx]);
+            layout2 = generateLayout(CARDS[card2Idx]);
+            renderCard('card1', CARDS[card1Idx], layout1);
+            renderCard('card2', CARDS[card2Idx], layout2);
+        }
+
+        function showSolution() {
+            const c1 = CARDS[card1Idx], c2 = CARDS[card2Idx];
+            const common = c1.find(s => c2.includes(s));
+            renderCard('card1', c1, layout1, common);
+            renderCard('card2', c2, layout2, common);
+        }
+
+        // Kartengröße = verfügbarer Platz zwischen Titel und Buttons
+        function updateCardSize() {
+            const main = document.querySelector('main');
+            const rect = main.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const gap = parseFloat(getComputedStyle(main).gap) || 0;
+            const sideBySide = window.matchMedia('(orientation: landscape) and (min-width: 768px)').matches;
+
+            let size = sideBySide
+                ? Math.min((rect.width - gap) / 2, rect.height)
+                : Math.min(rect.width, (rect.height - gap) / 2);
+            size = Math.max(REFERENCE_CARD_PX, Math.min(MAX_CARD_PX, size - CARD_SAFETY_MARGIN_PX));
+
+            for (const id of ['card1', 'card2']) {
+                const c = document.getElementById(id);
+                c.style.width = c.style.height = size + 'px';
+            }
+        }
+
+        function handleResize() {
+            updateCardSize();
+            if (layout1.length) {
+                renderCard('card1', CARDS[card1Idx], layout1);
+                renderCard('card2', CARDS[card2Idx], layout2);
+            }
+        }
+
+        window.addEventListener('resize', handleResize);
+        window.addEventListener('orientationchange', () => setTimeout(handleResize, 50));
+        window.addEventListener('load', () => {
+            updateCardSize();
+            nextRound();
+        });
+    </script>
+
+    <script>
+        // Service Worker: App funktioniert nach dem ersten Aufruf auch offline.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js').catch(err => {
+                    console.error('Service-Worker-Registrierung fehlgeschlagen:', err);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
