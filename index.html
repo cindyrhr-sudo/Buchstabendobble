@@ -16,6 +16,12 @@
 
     <h1>Buchstaben-Dobble</h1>
 
+    <div class="sets">
+        <button id="set-alle" class="set-btn" onclick="setCardSet('alle')">Alle (9)</button>
+        <button id="set-gross" class="set-btn" onclick="setCardSet('gross')">Groß (6)</button>
+        <button id="set-klein" class="set-btn" onclick="setCardSet('klein')">Klein (6)</button>
+    </div>
+
     <main>
         <div id="card1" class="card"></div>
         <div id="card2" class="card"></div>
@@ -29,41 +35,51 @@
     <script src="cards.js"></script>
     <script>
         // ------------------------------------------------------------
-        // Zufällig verstreutes Layout mit Kollisionsvermeidung.
-        // Alle Maße sind Bruchteile der Kartenbreite (Referenz 270px),
-        // die Schriftgröße wird mit der Kartengröße mitskaliert -
-        // dadurch sieht die Anordnung auf jeder Kartengröße gleich aus.
-        // Buchstaben bleiben immer aufrecht (keine Drehung), sonst wären
-        // b/d/p/q oder n/u nicht mehr unterscheidbar.
+        // Jede Karte ist ein SVG mit festem Koordinatensystem (270 x 270,
+        // Mittelpunkt = 0/0). Das SVG skaliert mit der Kartengröße, deshalb
+        // sieht die Anordnung auf jedem Bildschirm gleich aus und muss bei
+        // Größenänderung nicht neu berechnet werden.
+        //
+        // Die Zeichen werden anhand ihrer gemessenen Tintenmaße (SYM_METRICS
+        // in cards.js) als Rechtecke platziert: kein Überlappen, mit
+        // Mindestabstand, und immer innerhalb des Kartenrands.
+        // Buchstaben bleiben aufrecht (keine Drehung), sonst wären b/d/p/q
+        // oder n/u nicht mehr unterscheidbar.
         // ------------------------------------------------------------
-        const REFERENCE_CARD_PX = 270;
-        const MAX_CARD_PX = 560;
-        const CARD_SAFETY_MARGIN_PX = 10;
-        const BASE_REM = 2.4;
-        const PADDING_PX = 5;
-        const SAFE_EDGE_R = 0.42;
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+        const CARD_UNITS = 270;          // Koordinatensystem der Karte
+        const R_MAX = 122;               // so weit darf ein Zeichen (samt Markierung) vom Mittelpunkt reichen
+        const GAP = 9;                   // Mindestabstand zwischen zwei Zeichen
+        const HL_PAD = 6;                // Abstand der roten Markierung zum Zeichen
+        // Ausgangsschriftgröße (in Karteneinheiten) je Anzahl Zeichen pro Karte:
+        // weniger Zeichen -> größere Schrift
+        const BASE_PX_BY_COUNT = { 6: 56, 9: 46 };
         const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
+        const MAX_CARD_PX = 560;
+        const MIN_CARD_PX = 270;
+        const CARD_SAFETY_MARGIN_PX = 10;
+
+        let activeCards = CARD_SETS.alle;
         let card1Idx = 0, card2Idx = 1;
         let layout1 = [], layout2 = [];
 
-        // Kreis, der das Zeichen (Breite ~0.6em pro Buchstabe, Höhe ~0.9em) umschließt
-        function footprintFrac(rem, text) {
-            const em = rem * 16;
-            const radius = 0.5 * Math.hypot(0.6 * text.length * em, 0.9 * em);
-            return (radius + PADDING_PX) / REFERENCE_CARD_PX;
+        function inkSize(sym, px) {
+            const m = SYM_METRICS[sym];
+            return { w: (m[2] - m[1]) * px, h: (m[4] - m[3]) * px };
         }
 
         function generateLayout(symbols) {
             const count = symbols.length;
-            const items = symbols.map((text, i) => {
-                const rem = BASE_REM * (0.85 + Math.random() * 0.35);
-                return { i, text, rem, frac: footprintFrac(rem, text) };
+            const base = BASE_PX_BY_COUNT[count] || BASE_PX_BY_COUNT[9];
+            const items = symbols.map((sym, i) => {
+                const px = base * (0.85 + Math.random() * 0.35); // unterschiedliche Größen
+                const { w, h } = inkSize(sym, px);
+                return { i, px, w, h };
             });
 
             // Gleichmäßige Basis-Slots (Sonnenblumen-Verteilung), zufällig zugelost
-            const typical = footprintFrac(BASE_REM, 'ab');
-            const slotMaxR = Math.max(0.1, SAFE_EDGE_R - typical);
+            const slotMaxR = R_MAX - 30;
             const rot = Math.random() * Math.PI * 2;
             const slots = [];
             for (let k = 0; k < count; k++) {
@@ -77,91 +93,117 @@
                 [slots[k], slots[j]] = [slots[j], slots[k]];
             }
 
-            const order = [...items].sort((a, b) => b.frac - a.frac); // Größte zuerst
             const placed = [];
             const result = new Array(count);
 
-            function fits(x, y, frac) {
-                let minMargin = Infinity;
+            // 0 = passt; sonst Maß der Verletzung (für den Notfall-Fallback)
+            function violation(x, y, w, h) {
+                let v = Math.max(0, Math.hypot(Math.abs(x) + w / 2 + HL_PAD, Math.abs(y) + h / 2 + HL_PAD) - R_MAX);
                 for (const p of placed) {
-                    minMargin = Math.min(minMargin, Math.hypot(x - p.x, y - p.y) - (frac + p.frac));
+                    const penX = (w + p.w) / 2 + GAP - Math.abs(x - p.x);
+                    const penY = (h + p.h) / 2 + GAP - Math.abs(y - p.y);
+                    if (penX > 0 && penY > 0) v += Math.min(penX, penY);
                 }
-                return minMargin;
+                return v;
             }
 
+            // Größte Zeichen zuerst -> bessere Packung
+            const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h);
             order.forEach((item, n) => {
                 const slot = slots[n];
-                let final = null;
+                let final = null, best = null, bestV = Infinity;
 
                 for (let step = 0; step < 20 && !final; step++) {
-                    const mult = Math.max(0.4, Math.pow(0.88, step));
-                    const frac = item.frac * mult;
-                    const maxR = Math.max(0.05, SAFE_EDGE_R - frac);
-                    let best = null, bestMargin = -Infinity;
+                    const mult = Math.max(0.5, Math.pow(0.92, step));
+                    const w = item.w * mult, h = item.h * mult;
 
                     const tryPos = (x, y) => {
-                        if (Math.hypot(x, y) > maxR) return false;
-                        const m = fits(x, y, frac);
-                        if (m >= 0) { final = { x, y, frac, rem: item.rem * mult }; return true; }
-                        if (m > bestMargin) { bestMargin = m; best = { x, y }; }
+                        const v = violation(x, y, w, h);
+                        if (v === 0) { final = { x, y, px: item.px * mult, w, h }; return true; }
+                        if (v < bestV) { bestV = v; best = { x, y, px: item.px * mult, w, h }; }
                         return false;
                     };
 
-                    // A: kleine Streuung um den Slot
-                    outer: for (const jr of [0.02, 0.05, 0.09, 0.14, 0.20]) {
+                    // A: kleine Streuung um den Slot (erhält die Gleichmäßigkeit)
+                    outer: for (const jr of [4, 10, 18, 28, 40]) {
                         for (let a = 0; a < 40; a++) {
                             if (tryPos(slot.x + (Math.random() * 2 - 1) * jr,
                                        slot.y + (Math.random() * 2 - 1) * jr)) break outer;
                         }
                     }
                     // B: breite Suche über die ganze Karte
-                    for (let a = 0; a < 250 && !final; a++) {
-                        const r = Math.sqrt(Math.random()) * maxR;
+                    for (let a = 0; a < 300 && !final; a++) {
+                        const r = Math.sqrt(Math.random()) * R_MAX;
                         const th = Math.random() * Math.PI * 2;
                         tryPos(r * Math.cos(th), r * Math.sin(th));
                     }
-                    // C: letzter Ausweg - bestes Ergebnis nehmen
-                    if (!final && mult <= 0.4) {
-                        final = { x: best ? best.x : 0, y: best ? best.y : 0, frac, rem: item.rem * mult };
-                    }
                 }
+                if (!final) final = best; // Notfall: bestes Ergebnis nehmen
                 placed.push(final);
-                result[item.i] = { x: final.x, y: final.y, rem: final.rem };
+                result[item.i] = final;
             });
             return result;
+        }
+
+        function svgEl(name, attrs) {
+            const el = document.createElementNS(SVG_NS, name);
+            for (const k in attrs) el.setAttribute(k, attrs[k]);
+            return el;
         }
 
         function renderCard(id, symbols, layout, common) {
             const el = document.getElementById(id);
             el.innerHTML = '';
-            const size = el.getBoundingClientRect().width || REFERENCE_CARD_PX;
-            const scale = size / REFERENCE_CARD_PX;
+            const half = CARD_UNITS / 2;
+            const svg = svgEl('svg', { viewBox: `${-half} ${-half} ${CARD_UNITS} ${CARD_UNITS}` });
 
-            symbols.forEach((text, i) => {
-                const pos = layout[i];
-                const div = document.createElement('div');
-                const isMatch = common !== undefined && text === common;
-                div.className = 'sym' + (isMatch ? ' highlight' : '');
-                div.style.fontSize = (pos.rem * (isMatch ? 1.2 : 1) * 16 * scale) + 'px';
-                div.style.left = (size / 2 + pos.x * size) + 'px';
-                div.style.top = (size / 2 + pos.y * size) + 'px';
-                div.textContent = text;
-                el.appendChild(div);
+            symbols.forEach((sym, i) => {
+                const p = layout[i];
+                const m = SYM_METRICS[sym];
+
+                if (sym === common) {
+                    svg.appendChild(svgEl('rect', {
+                        class: 'highlight',
+                        x: p.x - p.w / 2 - HL_PAD, y: p.y - p.h / 2 - HL_PAD,
+                        width: p.w + 2 * HL_PAD, height: p.h + 2 * HL_PAD,
+                        rx: p.h / 2 + HL_PAD
+                    }));
+                }
+
+                // Grundlinien-Position so wählen, dass die MITTE der Tinte auf (x, y) liegt
+                const t = svgEl('text', {
+                    class: 'sym',
+                    x: p.x - ((m[1] + m[2]) / 2) * p.px,
+                    y: p.y + ((m[3] + m[4]) / 2) * p.px,
+                    'font-size': p.px
+                });
+                t.textContent = sym;
+                svg.appendChild(t);
             });
+
+            el.appendChild(svg);
         }
 
         function nextRound() {
-            card1Idx = Math.floor(Math.random() * CARDS.length);
-            do { card2Idx = Math.floor(Math.random() * CARDS.length); } while (card2Idx === card1Idx);
+            card1Idx = Math.floor(Math.random() * activeCards.length);
+            do { card2Idx = Math.floor(Math.random() * activeCards.length); } while (card2Idx === card1Idx);
 
-            layout1 = generateLayout(CARDS[card1Idx]);
-            layout2 = generateLayout(CARDS[card2Idx]);
-            renderCard('card1', CARDS[card1Idx], layout1);
-            renderCard('card2', CARDS[card2Idx], layout2);
+            layout1 = generateLayout(activeCards[card1Idx]);
+            layout2 = generateLayout(activeCards[card2Idx]);
+            renderCard('card1', activeCards[card1Idx], layout1);
+            renderCard('card2', activeCards[card2Idx], layout2);
+        }
+
+        function setCardSet(name) {
+            activeCards = CARD_SETS[name];
+            for (const n of Object.keys(CARD_SETS)) {
+                document.getElementById('set-' + n).classList.toggle('active', n === name);
+            }
+            nextRound();
         }
 
         function showSolution() {
-            const c1 = CARDS[card1Idx], c2 = CARDS[card2Idx];
+            const c1 = activeCards[card1Idx], c2 = activeCards[card2Idx];
             const common = c1.find(s => c2.includes(s));
             renderCard('card1', c1, layout1, common);
             renderCard('card2', c2, layout2, common);
@@ -178,7 +220,7 @@
             let size = sideBySide
                 ? Math.min((rect.width - gap) / 2, rect.height)
                 : Math.min(rect.width, (rect.height - gap) / 2);
-            size = Math.max(REFERENCE_CARD_PX, Math.min(MAX_CARD_PX, size - CARD_SAFETY_MARGIN_PX));
+            size = Math.max(MIN_CARD_PX, Math.min(MAX_CARD_PX, size - CARD_SAFETY_MARGIN_PX));
 
             for (const id of ['card1', 'card2']) {
                 const c = document.getElementById(id);
@@ -186,19 +228,11 @@
             }
         }
 
-        function handleResize() {
-            updateCardSize();
-            if (layout1.length) {
-                renderCard('card1', CARDS[card1Idx], layout1);
-                renderCard('card2', CARDS[card2Idx], layout2);
-            }
-        }
-
-        window.addEventListener('resize', handleResize);
-        window.addEventListener('orientationchange', () => setTimeout(handleResize, 50));
+        window.addEventListener('resize', updateCardSize);
+        window.addEventListener('orientationchange', () => setTimeout(updateCardSize, 50));
         window.addEventListener('load', () => {
             updateCardSize();
-            nextRound();
+            setCardSet('alle');
         });
     </script>
 
