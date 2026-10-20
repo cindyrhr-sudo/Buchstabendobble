@@ -5,7 +5,7 @@
 // änderst, erhöhe die Versionsnummer unten (v1 -> v2 -> ...). Sonst
 // laden die iPads weiterhin die alte, gecachte Version.
 // ============================================================
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `buchstaben-dobble-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -16,7 +16,7 @@ const APP_SHELL = [
     './manifest.json',
     './icon-192.png',
     './icon-512.png',
-    './fonts/andika-latin-400.woff2'
+    './fonts/playwrite-de-grund-400.woff2'
 ];
 
 self.addEventListener('install', event => {
