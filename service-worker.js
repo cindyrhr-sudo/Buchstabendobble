@@ -5,7 +5,7 @@
 // änderst, erhöhe die Versionsnummer unten (v1 -> v2 -> ...). Sonst
 // laden die iPads weiterhin die alte, gecachte Version.
 // ============================================================
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const CACHE_NAME = `buchstaben-dobble-${CACHE_VERSION}`;
 
 const APP_SHELL = [
