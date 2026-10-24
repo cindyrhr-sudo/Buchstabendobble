@@ -1,4 +1,4 @@
-// ============================================================
+ // ============================================================
 // Service Worker für Buchstaben-Dobble (Offline-Fähigkeit)
 //
 // WICHTIG BEI UPDATES: Wenn du index.html, style.css, cards.js o.ä.
