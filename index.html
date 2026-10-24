@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
@@ -40,20 +40,23 @@
         // sieht die Anordnung auf jedem Bildschirm gleich aus und muss bei
         // Größenänderung nicht neu berechnet werden.
         //
-        // Die Zeichen werden anhand ihrer gemessenen Tintenmaße (SYM_METRICS
-        // in cards.js) als Rechtecke platziert: kein Überlappen, mit
-        // Mindestabstand, und immer innerhalb des Kartenrands.
+        // Jedes Zeichen sitzt in einem dünnen Ring. Dessen Größe richtet sich
+        // nach dem kleinsten Kreis um die Umrisse des Zeichens (SYM_METRICS
+        // in cards.js: Mittelpunkt x, Mittelpunkt y, Radius - in em), sodass
+        // der Ring das Zeichen immer umschließt. Die Ringe werden als Kreise
+        // platziert: kein Überlappen, mit Mindestabstand, und immer innerhalb
+        // des Kartenrands.
         // Buchstaben bleiben aufrecht (keine Drehung), sonst wären b/d/p/q
         // oder n/u nicht mehr unterscheidbar.
         // ------------------------------------------------------------
         const SVG_NS = 'http://www.w3.org/2000/svg';
         const CARD_UNITS = 270;          // Koordinatensystem der Karte
-        const R_MAX = 122;               // so weit darf ein Zeichen (samt Markierung) vom Mittelpunkt reichen
-        const GAP = 9;                   // Mindestabstand zwischen zwei Zeichen
-        const HL_PAD = 6;                // Abstand der roten Markierung zum Zeichen
+        const R_MAX = 127;               // so weit darf ein Ring vom Mittelpunkt reichen (Kartenrand innen: 135)
+        const GAP = 6;                   // Mindestabstand zwischen zwei Ringen
+        const RING_PAD = 4;              // Abstand zwischen dem Zeichen und dem Ring
         // Ausgangsschriftgröße (in Karteneinheiten) je Anzahl Zeichen pro Karte:
         // weniger Zeichen -> größere Schrift
-        const BASE_PX_BY_COUNT = { 6: 56, 9: 46 };
+        const BASE_PX_BY_COUNT = { 6: 46, 9: 38 };
         const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
         const MAX_CARD_PX = 560;
@@ -64,22 +67,16 @@
         let card1Idx = 0, card2Idx = 1;
         let layout1 = [], layout2 = [];
 
-        function inkSize(sym, px) {
-            const m = SYM_METRICS[sym];
-            return { w: (m[2] - m[1]) * px, h: (m[4] - m[3]) * px };
-        }
-
         function generateLayout(symbols) {
             const count = symbols.length;
             const base = BASE_PX_BY_COUNT[count] || BASE_PX_BY_COUNT[9];
             const items = symbols.map((sym, i) => {
                 const px = base * (0.85 + Math.random() * 0.35); // unterschiedliche Größen
-                const { w, h } = inkSize(sym, px);
-                return { i, px, w, h };
+                return { i, px, half: SYM_METRICS[sym][2] * px };  // Radius des Kreises um das Zeichen
             });
 
             // Gleichmäßige Basis-Slots (Sonnenblumen-Verteilung), zufällig zugelost
-            const slotMaxR = R_MAX - 30;
+            const slotMaxR = R_MAX - 35;
             const rot = Math.random() * Math.PI * 2;
             const slots = [];
             for (let k = 0; k < count; k++) {
@@ -97,30 +94,30 @@
             const result = new Array(count);
 
             // 0 = passt; sonst Maß der Verletzung (für den Notfall-Fallback)
-            function violation(x, y, w, h) {
-                let v = Math.max(0, Math.hypot(Math.abs(x) + w / 2 + HL_PAD, Math.abs(y) + h / 2 + HL_PAD) - R_MAX);
+            function violation(x, y, r) {
+                let v = Math.max(0, Math.hypot(x, y) + r - R_MAX);
                 for (const p of placed) {
-                    const penX = (w + p.w) / 2 + GAP - Math.abs(x - p.x);
-                    const penY = (h + p.h) / 2 + GAP - Math.abs(y - p.y);
-                    if (penX > 0 && penY > 0) v += Math.min(penX, penY);
+                    const pen = r + p.r + GAP - Math.hypot(x - p.x, y - p.y);
+                    if (pen > 0) v += pen;
                 }
                 return v;
             }
 
             // Größte Zeichen zuerst -> bessere Packung
-            const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h);
+            const order = [...items].sort((a, b) => b.half - a.half);
             order.forEach((item, n) => {
                 const slot = slots[n];
                 let final = null, best = null, bestV = Infinity;
 
                 for (let step = 0; step < 20 && !final; step++) {
                     const mult = Math.max(0.5, Math.pow(0.92, step));
-                    const w = item.w * mult, h = item.h * mult;
+                    const r = item.half * mult + RING_PAD;
+                    const px = item.px * mult;
 
                     const tryPos = (x, y) => {
-                        const v = violation(x, y, w, h);
-                        if (v === 0) { final = { x, y, px: item.px * mult, w, h }; return true; }
-                        if (v < bestV) { bestV = v; best = { x, y, px: item.px * mult, w, h }; }
+                        const v = violation(x, y, r);
+                        if (v === 0) { final = { x, y, px, r }; return true; }
+                        if (v < bestV) { bestV = v; best = { x, y, px, r }; }
                         return false;
                     };
 
@@ -133,9 +130,9 @@
                     }
                     // B: breite Suche über die ganze Karte
                     for (let a = 0; a < 300 && !final; a++) {
-                        const r = Math.sqrt(Math.random()) * R_MAX;
+                        const d = Math.sqrt(Math.random()) * Math.max(0, R_MAX - r);
                         const th = Math.random() * Math.PI * 2;
-                        tryPos(r * Math.cos(th), r * Math.sin(th));
+                        tryPos(d * Math.cos(th), d * Math.sin(th));
                     }
                 }
                 if (!final) final = best; // Notfall: bestes Ergebnis nehmen
@@ -161,20 +158,17 @@
                 const p = layout[i];
                 const m = SYM_METRICS[sym];
 
-                if (sym === common) {
-                    svg.appendChild(svgEl('rect', {
-                        class: 'highlight',
-                        x: p.x - p.w / 2 - HL_PAD, y: p.y - p.h / 2 - HL_PAD,
-                        width: p.w + 2 * HL_PAD, height: p.h + 2 * HL_PAD,
-                        rx: p.h / 2 + HL_PAD
-                    }));
-                }
+                // Dünner Ring um das Zeichen; beim Auflösen wird der Ring des Treffers rot markiert
+                svg.appendChild(svgEl('circle', {
+                    class: sym === common ? 'ring highlight' : 'ring',
+                    cx: p.x, cy: p.y, r: p.r
+                }));
 
-                // Grundlinien-Position so wählen, dass die MITTE der Tinte auf (x, y) liegt
+                // Schreibposition so wählen, dass der Mittelpunkt des Zeichenkreises auf (x, y) liegt
                 const t = svgEl('text', {
                     class: 'sym',
-                    x: p.x - ((m[1] + m[2]) / 2) * p.px,
-                    y: p.y + ((m[3] + m[4]) / 2) * p.px,
+                    x: p.x - m[0] * p.px,
+                    y: p.y + m[1] * p.px,
                     'font-size': p.px
                 });
                 t.textContent = sym;
