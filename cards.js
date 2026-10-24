@@ -1,4 +1,4 @@
-// Drei Kartensätze, jeweils eine projektive Ebene (verifiziert: jedes Kartenpaar hat
+ // Drei Kartensätze, jeweils eine projektive Ebene (verifiziert: jedes Kartenpaar hat
 // genau EIN gemeinsames Zeichen, jede Karte hat nur verschiedene Zeichen).
 //   alle : 73 Karten, 9 Zeichen pro Karte (Ordnung 8)
 //          A-Z ohne Q, a-z ohne q, ä ö ü ß Ä Ö Ü, ei au eu sch ch st sp pf qu, Ei Au Eu Sch St Sp Qu
