@@ -133,6 +133,13 @@ main {
     fill: var(--ink);
 }
 
+/* Dünner Ring um jedes Zeichen (deutlich dünner als der Schriftstrich) */
+.ring {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.4;
+}
+
 .highlight {
     fill: rgba(201, 42, 42, 0.18);
     stroke: var(--mark);
